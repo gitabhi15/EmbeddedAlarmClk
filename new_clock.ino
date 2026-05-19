@@ -1,5 +1,6 @@
-#include <LiquidCrystal.h>
 #include <Wire.h>
+#include <hd44780.h>
+#include <hd44780ioClass/hd44780_I2Cexp.h>
 #include <RTClib.h>
 #include <DS3232RTC.h>
 #include <Keypad.h>
@@ -7,7 +8,7 @@
 #define ROWS 4
 #define COLS 4
 
-//Keypad Pin Init
+// Keypad Pin Init
 byte rowPins[ROWS] = { 36, 38, 40, 42 };
 byte colPins[COLS] = { 44, 46, 48, 50 };
 
@@ -18,12 +19,12 @@ char keys[ROWS][COLS] = {
   { '*', '0', '#', 'D' }
 };
 
-//Object declarations
-LiquidCrystal lcd(22, 24, 26, 28, 30, 32);
+// Object declarations
+hd44780_I2Cexp lcd;
 RTC_DS3231 rtc;
 Keypad keypad = Keypad(makeKeymap(keys), rowPins, colPins, ROWS, COLS);
 
-//Alarm FSM states
+// Alarm FSM states
 enum AlarmState {
   CLOCK_MODE,
   MANUAL_RESET,
@@ -33,31 +34,33 @@ enum AlarmState {
   ALARM_FINISHED,
   SNOOZE,
   SNOOZE_SETUP,
-  SNOOZE_FINISHED
+  SNOOZE_FINISHED,
   ERROR
 };
 
-//Pin declarations
+// Pin declarations
 const int buzzPin = 11;
 const int sqwPin = 2;
+const int LCD_COLS = 16;
+const int LCD_ROWS = 2;
 
 /* Flags */
 
 volatile bool alarmTriggered = false;  //set for ISR attachment
 
-//Alarm Flags:
-bool alarmMode = false;
+// Alarm Flags:
+// bool alarmMode = false;
 bool settingMinutes = false;
 bool settingHours = false;
 bool showBootUp = false;
 bool alarmFin = false;
 
-//Snooze Flags:
+// Snooze Flags:
 bool snoozeMode = false;
 bool snoozeFin = false;
 
-//Reset Flags:
-bool resetMode = false;
+// Reset Flags:
+// bool resetMode = false;
 bool resetFin = false;
 
 
@@ -71,10 +74,9 @@ const unsigned long bootUpDuration = 4000;
 
 void setup() {
   Serial.begin(9600);
+  lcd.begin(LCD_COLS, LCD_ROWS);
   pinMode(buzzPin, OUTPUT);
   pinMode(sqwPin, INPUT_PULLUP);
-
-  lcd.begin(16, 2);
 
   if (!rtc.begin()) {
     Serial.println("Couldn't find RTC");
@@ -94,69 +96,95 @@ void setup() {
 
 void loop() {
   AlarmState currState = CLOCK_MODE;
-  // AlarmState nextState = CLOCK_MODE;
+
+  char key = keypad.getKey();
+  if (key != NO_KEY) {
+    if (key == 'A') {
+      currState = ALARM_MODE;
+    } else if (key == 'B') {
+      currState = MANUAL_RESET;
+    }
+  }
+
   switch (currState) {
 
-    case CLOCK_MODE:
+    case CLOCK_MODE:  // displays regular 24hr clock
       displayClock();
       currState = CLOCK_MODE;
-      if(resetMode){
-        currState = MANUAL_RESET;
-      }
-      if(alarmMode){
-        currState = ALARM_MODE;
-      }
+      // if (resetMode) {
+      //   currState = MANUAL_RESET;
+      // }
+      // if (alarmMode) {
+      //   currState = ALARM_MODE;
+      // }
       break;
 
-    case MANUAL_RESET:
+    case MANUAL_RESET:  // reset time of clock
       reset_boot();
       currState = RE_SETUP;
       break;
 
     case RE_SETUP:
-      syncClock(); //note- automatic for now, might introduce manual 'manual' reset later
-      if(resetFin){
+      syncClock();  // note- automatic for now, might introduce manual 'manual' reset later
+      if (resetFin) {
         currState = CLOCK_MODE;
       }
       currState = ERROR;
       break;
-    
-    case ALARM_MODE:
+
+    case ALARM_MODE:  // alarm mode gets prompted
       alarm_boot();
       currState = ALARM_SETUP;
       break;
 
-    case ALARM_SETUP:
+    case ALARM_SETUP:  // alarm setup prompted
       alarmSetup();
-      if(alarmFin){
+      if (alarmFin) {
         currState = ALARM_FINISHED;
       }
       break;
 
-    case ALARM_FINISHED:
-      if(snoozeMode){
+    case ALARM_FINISHED:  // alarm rings and signals to either snooze or return to clock mode
+      if (snoozeMode) {
         currState = SNOOZE;
       }
       currState = CLOCK_MODE;
       break;
 
-    case SNOOZE:
+    case SNOOZE:  // snooze mode gets prompted
       snooze_boot();
       currState = SNOOZE_SETUP;
       break;
 
-    case SNOOZE_SETUP:
+    case SNOOZE_SETUP:  // snooze button mechanism
       snoozeSetup();
-      if(snoozeFin){
+      if (snoozeFin) {
         currState = SNOOZE_FINISHED;
       }
       break;
-    case SNOOZE_FINISHED:
+
+    case SNOOZE_FINISHED:  // snooze period finished
       snoozeFinished();
-      if(snoozeMode){
+      if (snoozeMode) {
         currState = SNOOZE;
       }
       currState = CLOCK_MODE;
+      break;
+
+    case ERROR:
+      lcd.setCursor(0, 0);
+      lcd.print("Error occured. Please")
+        lcd.setCursor(1, 0);
+      lcd.print("try again.")
+        currState = CLOCK_MODE;
+      break;
+
+    default:
+      lcd.setCursor(0, 0);
+      lcd.print("Error occured. Please")
+        lcd.setCursor(1, 0);
+      lcd.print("try again.")
+        currState = CLOCK_MODE;
       break;
   }
 }
@@ -166,13 +194,39 @@ void syncClock() {
 }
 
 void displayClock() {
+  if (millis() - prevClockUpdate >= clockUpdateInterval && !alarmMode) {
+    prevClockUpdate = millis();
+    displayClock();
+  }
 }
 
 void alarmSetup() {
 }
 
 void reset_boot() {
+  lcd.clear();
+  lcd.setCursor(16, 0);
+  lcd.autoscroll();
+  volatile bool interruptTriggered = false;
+  String message = "Please reset your clock        ";  
+
+  for (int i = 0; i < message.length(); i++) {
+    if (interruptTriggered) {
+      break;
+    }
+    lcd.print(message[i]);
+    unsigned long startMillis = millis();
+    while (millis() - startMillis < 3000) {
+      if (interruptTriggered) {
+        break;
+      }
+    }
+  }
+  lcd.noAutoscroll();
+  lcd.clear();
+  resetFin = true;
 }
+
 
 void alarm_boot() {
 }
