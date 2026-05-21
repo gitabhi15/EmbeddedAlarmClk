@@ -67,10 +67,10 @@ bool resetFin = false;
 //State variables:
 String mins = "";
 String hrs = "";
-unsigned long prevClockUpdate = 0;
-const unsigned long clockUpdateInterval = 1000;
-unsigned long bootUpStartTime = 0;
-const unsigned long bootUpDuration = 4000;
+// unsigned long prevClockUpdate = 0;
+// const unsigned long clockUpdateInterval = 1000;
+// unsigned long bootUpStartTime = 0;
+// const unsigned long bootUpDuration = 4000;
 
 void setup() {
   Serial.begin(9600);
@@ -173,30 +173,44 @@ void loop() {
 
     case ERROR:
       lcd.setCursor(0, 0);
-      lcd.print("Error occured. Please")
-        lcd.setCursor(1, 0);
-      lcd.print("try again.")
-        currState = CLOCK_MODE;
+      lcd.print("Error occured. Please");
+      lcd.setCursor(1, 0);
+      lcd.print("try again.");
+      currState = CLOCK_MODE;
       break;
 
     default:
       lcd.setCursor(0, 0);
-      lcd.print("Error occured. Please")
-        lcd.setCursor(1, 0);
-      lcd.print("try again.")
-        currState = CLOCK_MODE;
+      lcd.print("Error occured. Please");
+      lcd.setCursor(1, 0);
+      lcd.print("try again.");
+      currState = CLOCK_MODE;
       break;
   }
 }
 
 void syncClock() {
   rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+  resetFin = true;
 }
 
 void displayClock() {
-  if (millis() - prevClockUpdate >= clockUpdateInterval && !alarmMode) {
+  unsigned long prevClockUpdate = 0;
+  const unsigned long clockUpdateInterval = 1000;
+  if (millis() - prevClockUpdate >= clockUpdateInterval) {
     prevClockUpdate = millis();
-    displayClock();
+    DateTime now = rtc.now();
+    lcd.setCursor(0, 0);
+    lcd.print("Time: ");
+    lcd.setCursor(2, 1);
+    if (now.hour() < 10) lcd.print("0");
+    lcd.print(now.hour());
+    lcd.print(" : ");
+    if (now.minute() < 10) lcd.print("0");
+    lcd.print(now.minute());
+    lcd.print(" : ");
+    if (now.second() < 10) lcd.print("0");
+    lcd.print(now.second());
   }
 }
 
@@ -207,28 +221,42 @@ void reset_boot() {
   lcd.clear();
   lcd.setCursor(16, 0);
   lcd.autoscroll();
-  volatile bool interruptTriggered = false;
-  String message = "Please reset your clock        ";  
 
-  for (int i = 0; i < message.length(); i++) {
-    if (interruptTriggered) {
-      break;
-    }
-    lcd.print(message[i]);
-    unsigned long startMillis = millis();
-    while (millis() - startMillis < 3000) {
-      if (interruptTriggered) {
-        break;
+  String message = "Please reset your clock        ";
+  int charIndex = 0;
+
+  unsigned long startTime = millis();
+  unsigned long lastCharTime = 0;
+  const int scrollSpeed = 250;
+
+  while (millis() - startTime < 3000) {
+    if (millis() - lastCharTime >= scrollSpeed) {
+      lastCharTime = millis();
+      lcd.print(message[charIndex]);
+      charIndex++;
+
+      if (charIndex >= message.length()) {
+        charIndex = 0;
+        lcd.clear();
+        lcd.setCursor(16, 0);
       }
     }
   }
   lcd.noAutoscroll();
   lcd.clear();
-  resetFin = true;
 }
 
-
 void alarm_boot() {
+  unsigned long startTime = 0;
+  unsigned long displayTime = 5000;
+  lcd.setCursor(0, 0);
+  lcd.print("C = Confirm");
+  lcd.setCursor(1, 0);
+  lcd.print("# = Cancel");
+
+  while (millis() - startTime < displayTime) {
+  }
+  lcd.clear();
 }
 
 void snooze_boot() {
