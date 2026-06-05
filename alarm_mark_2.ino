@@ -36,6 +36,7 @@ enum AlarmState {
   ALARM_FINISHED,
   SNOOZE,
   SNOOZE_SETUP,
+  SAVE_SNOOZE,
   SNOOZE_FINISHED,
   ERROR
 };
@@ -43,37 +44,41 @@ enum AlarmState {
 // Pin declarations
 const int buzzPin = 11;
 const int sqwPin = 2;
+const int pushButton = 8;
 const int LCD_COLS = 16;
 const int LCD_ROWS = 2;
 char key;
+int lastButtonState = HIGH;
 AlarmState currState;
 
 /* Flags */
 
 volatile bool alarmTriggered = false;  // set for ISR attachment
-
-// Alarm Flags:
-bool alarmReady = false;
-
-// Snooze Flags:
-bool snoozeMode = false;
-bool snoozeFin = false;
-
-// Reset Flags:
+bool buzzerState = LOW;
 bool resetFin = false;
 
 // State variables:
 String mins = "";
 String hrs = "";
+String snooze_mins = "";
 unsigned long prevClockUpdate = 0;
 const unsigned long clockUpdateInterval = 1000;
 unsigned long alarmBootStartTime = 0;
 const unsigned long alarmBootDisplayTime = 5000;
+unsigned long buttonHoldTime = 0;
+const unsigned long buttonHoldLimit = 4000;
+unsigned long buzzerRingTime = 0;
+const unsigned long buzzerRingLimit = 10000;
+unsigned long buzzerToggleTime = 0;
+const unsigned long buzzerToggleLimit = 500;
+unsigned long snoozeBootStartTime = 0;
+const unsigned long snoozeBootDisplayTime = 3500;
 
 void setup() {
   Serial.begin(9600);
   lcd.begin(LCD_COLS, LCD_ROWS);
   pinMode(buzzPin, OUTPUT);
+  pinMode(pushButton, INPUT_PULLUP);
   pinMode(sqwPin, INPUT_PULLUP);
 
   if (!rtc.begin()) {
@@ -100,13 +105,18 @@ void loop() {
     if (key == 'A') {
       currState = ALARM_MODE;
       alarmBootStartTime = millis();
+      lcd.setCursor(0, 0);
+      lcd.print("C = Confirm");
+      lcd.setCursor(0, 1);
+      lcd.print("# = Cancel");
     } else if (key == 'B') {
       currState = MANUAL_RESET;
     }
   }
 
-  if (alarmTriggered) {  //routing from regular clock display to alarm finishing state
+  if (alarmTriggered && currState != ALARM_FINISHED) {  //routing from regular clock display to alarm finishing state
     currState = ALARM_FINISHED;
+    buzzerRingTime = millis();
   }
 
   switch (currState) {
@@ -147,32 +157,18 @@ void loop() {
 
     case ALARM_FINISHED:  // alarm rings and signals to either snooze or return to clock mode
       alarmFinished();
-      if (snoozeMode) {
-        currState = SNOOZE;
-      } else {
-        currState = CLOCK_MODE;
-      }
       break;
 
     case SNOOZE:  // snooze mode gets prompted
       snooze_boot();
-      currState = SNOOZE_SETUP;
       break;
 
     case SNOOZE_SETUP:  // snooze button mechanism
       snoozeSetup();
-      if (snoozeFin) {
-        currState = SNOOZE_FINISHED;
-      }
       break;
 
-    case SNOOZE_FINISHED:  // snooze period finished
-      snoozeFinished();
-      if (snoozeMode) {
-        currState = SNOOZE;
-      } else {
-        currState = CLOCK_MODE;
-      }
+    case SAVE_SNOOZE:
+      saveSnooze();
       break;
 
     case ERROR:
@@ -331,50 +327,132 @@ void saveAlarm() {
 }
 
 void alarm_boot() {
-  if (millis() - alarmBootStartTime < alarmBootDisplayTime) {
-    lcd.setCursor(0, 0);
-    lcd.print("C = Confirm");
-    lcd.setCursor(0, 1);
-    lcd.print("# = Cancel");
+  if (millis() - alarmBootStartTime >= alarmBootDisplayTime) {
+    lcd.clear();
+    currState = SET_MINUTES;
   }
-  lcd.clear();
-  currState = SET_MINUTES;
 }
 
 void alarmFinished() {
-  lcd.clear();
   lcd.setCursor(0, 0);
   lcd.print("WAKE UP!!!");
 
-  for (int i = 0; i < 5; i++) {
-    digitalWrite(buzzPin, HIGH);
-    delay(500);
-    digitalWrite(buzzPin, LOW);
-    delay(500);
+  int currentButtonState = digitalRead(pushButton);
+
+  if (lastButtonState == HIGH && currentButtonState == LOW) {
+    buttonHoldTime = millis();
   }
 
-  // Clear alarm flag in RTC so it can be triggered again later
-  rtc.clearAlarm(1);
+  if (currentButtonState == LOW) {
+    if (millis() - buttonHoldTime >= buttonHoldLimit) {
+      digitalWrite(buzzPin, LOW);
+      rtc.clearAlarm(1);
+      alarmTriggered = false;
+      currState = SNOOZE;
+      snoozeBootStartTime = millis();
 
-  alarmTriggered = false;  // reset flag
-  currState = CLOCK_MODE;
+      lcd.clear();
+      lcd.setCursor(0, 0);
+      lcd.print("Snooze mode");
+      lcd.setCursor(0, 1);
+      lcd.print("activated");
+      return;
+    }
+  }
 
-  // snooze logic goes here-
+  lastButtonState = currentButtonState;
+
+  if (millis() - buzzerRingTime >= buzzerRingLimit) {
+    digitalWrite(buzzPin, LOW);
+    rtc.clearAlarm(1);
+    alarmTriggered = false;
+    currState = CLOCK_MODE;
+    return;
+  }
+
+  if (millis() - buzzerToggleTime >= buzzerToggleLimit) {
+    buzzerToggleTime = millis();
+    buzzerState = !buzzerState;
+    digitalWrite(buzzPin, buzzerState);
+  }
 }
 
 void resetAlarmState() {
-  alarmReady = false;
   mins = "";
   hrs = "";
 }
 
 void snooze_boot() {
+  unsigned long elapsedTime = millis() - snoozeBootStartTime;
+
+  if (elapsedTime >= snoozeBootDisplayTime && elapsedTime < (snoozeBootDisplayTime * 2)) {
+    lcd.setCursor(0, 0);
+    lcd.print("Please press C  ");
+    lcd.setCursor(0, 1);
+    lcd.print("to setup snooze ");
+  } else if (elapsedTime >= (snoozeBootDisplayTime * 2)) {
+    lcd.clear();
+    currState = SNOOZE_SETUP;
+  }
 }
 
 void snoozeSetup() {
+  if (isDigit(key) && snooze_mins.length() < 3) {
+    snooze_mins += key;
+  }
+
+  lcd.setCursor(0, 0);
+  lcd.print("Minutes: ");
+  lcd.setCursor(9, 0);
+  lcd.print(snooze_mins + "  ");
+
+  if (key == 'C') {
+    lcd.clear();
+    currState = SAVE_SNOOZE;
+  }
+  if (key == '#') {
+    clearRow(0);
+    snooze_mins = "";
+    currState = SNOOZE_SETUP;
+  }
+  if (key == 'D') {
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Snooze cancelled");
+    resetSnoozeState();
+    currState = CLOCK_MODE;
+  }
 }
 
-void snoozeFinished() {
+void saveSnooze() {
+  int sm = snooze_mins.toInt();
+  DateTime now = rtc.now();
+
+  DateTime snoozeTime = now + TimeSpan(0, 0, sm, 0);
+  rtc.setAlarm1(snoozeTime, DS3231_A1_Hour);
+
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Snooze set to:");
+  lcd.setCursor(4, 1);
+
+  if (snoozeTime.hour() < 10) lcd.print("0");
+  lcd.print(snoozeTime.hour());
+
+  lcd.print(" : ");
+
+  if (snoozeTime.minute() < 10) lcd.print("0");
+  lcd.print(snoozeTime.minute());
+
+  delay(2000);
+  lcd.clear();
+  resetSnoozeState();
+
+  currState = CLOCK_MODE;
+}
+
+void resetSnoozeState() {
+  snooze_mins = "";
 }
 
 void clearRow(int row) {
