@@ -9,8 +9,8 @@
 #define COLS 4
 
 // Keypad Pin Init
-byte rowPins[ROWS] = { 36, 38, 40, 42 };
-byte colPins[COLS] = { 44, 46, 48, 50 };
+byte rowPins[ROWS] = {4, 5, 6, 7};
+byte colPins[COLS] = {8, 9, 10, 11};
 
 char keys[ROWS][COLS] = {
   { '1', '2', '3', 'A' },
@@ -42,9 +42,9 @@ enum AlarmState {
 };
 
 // Pin declarations
-const int buzzPin = 11;
+const int buzzPin = 3;
 const int sqwPin = 2;
-const int pushButton = 8;
+const int pushButton = 12;
 const int LCD_COLS = 16;
 const int LCD_ROWS = 2;
 char key;
