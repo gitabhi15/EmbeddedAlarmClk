@@ -9,8 +9,8 @@
 #define COLS 4
 
 // Keypad Pin Init
-byte rowPins[ROWS] = {4, 5, 6, 7};
-byte colPins[COLS] = {8, 9, 10, 11};
+byte rowPins[ROWS] = { 4, 5, 6, 7 };
+byte colPins[COLS] = { 8, 9, 10, 11 };
 
 char keys[ROWS][COLS] = {
   { '1', '2', '3', 'A' },
@@ -95,6 +95,7 @@ void setup() {
   // Attach ISR for SQW pin (fires when alarm goes off, active LOW)
   attachInterrupt(digitalPinToInterrupt(sqwPin), alarmISR, FALLING);
   //syncClock();
+  keypad.setDebounceTime(10);
   currState = CLOCK_MODE;
 }
 
@@ -102,21 +103,27 @@ void loop() {
   key = keypad.getKey();  // keypad input
 
   if (key != NO_KEY) {  // routing from regular clock display to either alarm setup or manual reset
-    if (key == 'A') {
-      currState = ALARM_MODE;
-      alarmBootStartTime = millis();
-      lcd.setCursor(0, 0);
-      lcd.print("C = Confirm");
-      lcd.setCursor(0, 1);
-      lcd.print("# = Cancel");
-    } else if (key == 'B') {
-      currState = MANUAL_RESET;
+    if (currState == CLOCK_MODE) {
+      if (key == 'A') {
+        currState = ALARM_MODE;
+        alarmBootStartTime = millis();
+        lcd.clear();
+        lcd.setCursor(0, 0);
+        lcd.print("C = Confirm");
+        lcd.setCursor(0, 1);
+        lcd.print("# = Cancel");
+      } else if (key == 'B') {
+        currState = MANUAL_RESET;
+      }
     }
   }
 
   if (alarmTriggered && currState != ALARM_FINISHED) {  //routing from regular clock display to alarm finishing state
     currState = ALARM_FINISHED;
     buzzerRingTime = millis();
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("WAKE UP!!!");
   }
 
   switch (currState) {
@@ -254,6 +261,7 @@ void setMinutes() {
   if (key == 'C') {
     lcd.clear();
     currState = SET_HOURS;
+    delay(250);
   }
   if (key == '#') {
     clearRow(0);
@@ -264,6 +272,8 @@ void setMinutes() {
     lcd.clear();
     lcd.setCursor(0, 0);
     lcd.print("Alarm cancelled");
+    delay(2000);
+    lcd.clear();
     resetAlarmState();
     currState = CLOCK_MODE;
   }
@@ -282,6 +292,7 @@ void setHours() {
   if (key == 'C') {
     lcd.clear();
     currState = SAVE_ALARM;
+    delay(250);
   }
   if (key == '#') {
     clearRow(0);
@@ -292,6 +303,8 @@ void setHours() {
     lcd.clear();
     lcd.setCursor(0, 0);
     lcd.print("Alarm cancelled");
+    delay(2000);
+    lcd.clear();
     resetAlarmState();
     currState = CLOCK_MODE;
   }
@@ -304,6 +317,7 @@ void saveAlarm() {
 
   // Set Alarm1 for today at H:M:00
   rtc.setAlarm1(DateTime(now.year(), now.month(), now.day(), h, m, 0), DS3231_A1_Hour);
+  rtc.clearAlarm(1);
 
   lcd.clear();
 
@@ -334,9 +348,6 @@ void alarm_boot() {
 }
 
 void alarmFinished() {
-  lcd.setCursor(0, 0);
-  lcd.print("WAKE UP!!!");
-
   int currentButtonState = digitalRead(pushButton);
 
   if (lastButtonState == HIGH && currentButtonState == LOW) {
@@ -348,6 +359,7 @@ void alarmFinished() {
       digitalWrite(buzzPin, LOW);
       rtc.clearAlarm(1);
       alarmTriggered = false;
+      lcd.clear();
       currState = SNOOZE;
       snoozeBootStartTime = millis();
 
@@ -366,6 +378,7 @@ void alarmFinished() {
     digitalWrite(buzzPin, LOW);
     rtc.clearAlarm(1);
     alarmTriggered = false;
+    lcd.clear();
     currState = CLOCK_MODE;
     return;
   }
@@ -409,6 +422,7 @@ void snoozeSetup() {
   if (key == 'C') {
     lcd.clear();
     currState = SAVE_SNOOZE;
+    delay(250);
   }
   if (key == '#') {
     clearRow(0);
@@ -419,6 +433,8 @@ void snoozeSetup() {
     lcd.clear();
     lcd.setCursor(0, 0);
     lcd.print("Snooze cancelled");
+    delay(2000);
+    lcd.clear();
     resetSnoozeState();
     currState = CLOCK_MODE;
   }
@@ -428,7 +444,8 @@ void saveSnooze() {
   int sm = snooze_mins.toInt();
   DateTime now = rtc.now();
 
-  DateTime snoozeTime = now + TimeSpan(0, 0, sm, 0);
+  DateTime snappedNow = DateTime(now.year(), now.month(), now.day(), now.hour(), now.minute(), 0);
+  DateTime snoozeTime = snappedNow + TimeSpan(0, 0, sm, 0);
   rtc.setAlarm1(snoozeTime, DS3231_A1_Hour);
 
   lcd.clear();
